@@ -1,0 +1,4 @@
+origin_segment_id,destination_segment_id,duration_seconds,observed_at,source
+seg_kalawad_w,seg_university_e,615,2026-07-10T18:15:00+05:30,Floating car survey
+seg_university_e,seg_kalawad_w,588,2026-07-10T18:45:00+05:30,Floating car survey
+

@@ -1,0 +1,19 @@
+.map.selecting { cursor: crosshair; box-shadow: inset 0 0 0 4px #4f46e5; }
+.map-tools button:first-child { font-size: 0; }
+.map-tools button:first-child::after { content: "Select road section (A → B)"; font-size: 13px; }
+.map-tools button.primary:first-child::after { content: "Click start A, then end B…"; }
+.legend span { display: none; }
+.legend::before { content: ""; width: 150px; height: 7px; border-radius: 5px; background: linear-gradient(90deg,#16a34a 0 20%,#84cc16 20% 40%,#f59e0b 40% 60%,#f97316 60% 80%,#dc2626 80%); }
+.legend::after { content: "Free   Moderate   Slow   Severe   Gridlock"; color: #475569; }
+select, input { font: inherit; font-weight: 400; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: white; min-width: 0; }
+.time-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.time-grid label { margin: 0; }
+.page { padding: 28px; max-width: 1050px; }
+.page > h2 { font-size: 25px; }
+.empty { margin-top: 20px; padding: 40px; border: 1px dashed #cbd5e1; border-radius: 10px; text-align: center; color: var(--muted); background: white; }
+.run-row { width: 100%; display: flex; align-items: center; justify-content: space-between; text-align: left; margin-top: 10px; padding: 16px; background: #fff; }
+.run-row > span:first-child { display: grid; gap: 4px; }
+.run-row small { color: var(--muted); }
+.report { background: white; border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-top: 14px; }
+.report h3 { margin-bottom: 4px; }
+@media print { .rail, header, .report button { display: none; } .shell { display: block; } .page { max-width: none; } }

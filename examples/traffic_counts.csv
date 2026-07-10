@@ -1,0 +1,5 @@
+segment_id,direction,vehicle_class,count,interval_minutes,observed_at,source
+seg_kalawad_w,eastbound,car,420,60,2026-07-10T18:00:00+05:30,Manual classified count
+seg_kalawad_w,eastbound,motorcycle,610,60,2026-07-10T18:00:00+05:30,Manual classified count
+seg_ring_n,northbound,auto_rickshaw,180,60,2026-07-10T18:00:00+05:30,Manual classified count
+
