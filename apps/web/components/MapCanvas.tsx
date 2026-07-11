@@ -1,17 +1,211 @@
 "use client";
-import {useEffect,useRef} from "react";
-import type {Segment} from "./types";
+import { useEffect, useRef } from "react";
+import type { Segment } from "./types";
 
-const API=process.env.NEXT_PUBLIC_API_BASE_URL||"http://localhost:8000";
-const congestion=(segment:Segment)=>{const ratio=(segment.current_speed_kph??segment.free_flow_speed_kph)/segment.free_flow_speed_kph;if(ratio>=.8)return"#16a34a";if(ratio>=.6)return"#84cc16";if(ratio>=.4)return"#f59e0b";if(ratio>=.2)return"#f97316";return"#dc2626"};
+const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const congestion = (segment: Segment) => {
+  const ratio =
+    (segment.current_speed_kph ?? segment.free_flow_speed_kph) /
+    segment.free_flow_speed_kph;
+  if (ratio >= 0.8) return "#16a34a";
+  if (ratio >= 0.6) return "#84cc16";
+  if (ratio >= 0.4) return "#f59e0b";
+  if (ratio >= 0.2) return "#f97316";
+  return "#dc2626";
+};
 
-export default function MapCanvas({segments,selected,onSelect,onRoadCreated,result,selectionMode}:{segments:Segment[];selected:string[];onSelect:(id:string)=>void;onRoadCreated:(road:Segment)=>void;result:any;selectionMode:boolean}){
- const el=useRef<HTMLDivElement>(null);
- useEffect(()=>{if(!el.current)return;let disposed=false,map:any,timer:number|undefined;const boot=async()=>{const L=await import("leaflet");if(disposed||!el.current)return;map=L.map(el.current,{zoomControl:true,preferCanvas:false}).setView([22.294,70.779],14);L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:20,attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(map);
-  const animated:any[]=[];
-  segments.forEach(segment=>{const closed=result?.map_layer?.closed_segment_ids?.includes(segment.id),chosen=selected.includes(segment.id),diverted=result?.map_layer?.rerouted_segment_ids?.includes(segment.id);const color=closed?"#111827":diverted?"#7c3aed":congestion(segment);const line=L.polyline(segment.geometry.map(([lon,lat])=>[lat,lon] as [number,number]),{color,weight:chosen?8:4,opacity:.88,dashArray:closed?"3 10":chosen?undefined:"12 12",lineCap:"round"}).addTo(map);line.bindTooltip(`<strong>${segment.name}</strong><br>${segment.highway||"road"} · ${segment.current_speed_kph??"?"}/${segment.free_flow_speed_kph} km/h<br>${segment.estimated_vehicles_per_hour??"?"} estimated veh/h`,{sticky:true});line.on("click",(event:any)=>{L.DomEvent.stopPropagation(event);onSelect(segment.id)});if(!closed&&!window.matchMedia("(prefers-reduced-motion: reduce)").matches)animated.push(line)});
-  let dash=0;if(animated.length)timer=window.setInterval(()=>{dash=(dash-1)%24;animated.forEach(line=>line.setStyle({dashOffset:String(dash)}))},90);
-  let start:any=null,startMarker:any=null;map.on("click",async(event:any)=>{if(!selectionMode)return;if(!start){start=event.latlng;startMarker=L.circleMarker(start,{radius:8,color:"#4f46e5",fillColor:"#fff",fillOpacity:1,weight:3}).addTo(map).bindTooltip("A · start",{permanent:true,direction:"top"});return}const end=event.latlng;L.circleMarker(end,{radius:8,color:"#4f46e5",fillColor:"#fff",fillOpacity:1,weight:3}).addTo(map).bindTooltip("B · end",{permanent:true,direction:"top"});try{const params=new URLSearchParams({start_lat:String(start.lat),start_lon:String(start.lng),end_lat:String(end.lat),end_lon:String(end.lng)});const response=await fetch(`${API}/api/v1/network/route-section?${params}`);if(!response.ok)throw new Error(await response.text());const route=await response.json();onRoadCreated({id:`map_${Date.now()}`,name:route.name,direction:"selected OSM section",geometry:route.geometry,lanes:1,free_flow_speed_kph:35,current_speed_kph:22,estimated_vehicles_per_hour:900,traffic_provenance:"estimated",mapping_confidence:1,provenance:"derived",custom:true})}catch(error){console.error(error)}finally{start=null;if(startMarker){startMarker.remove();startMarker=null}}});
- };boot();return()=>{disposed=true;if(timer)clearInterval(timer);if(map)map.remove()}},[segments,selected,onSelect,onRoadCreated,result,selectionMode]);
- const chosen=segments.filter(segment=>selected.includes(segment.id));return <div className="map-wrap"><div className={`map ${selectionMode?"selecting":""}`} ref={el} aria-label="OpenStreetMap road network and congestion layer"/><div className="osm-badge">OpenStreetMap network · {segments.length} selectable roads</div><div className="selection-stack"><strong>{chosen.length} portion{chosen.length===1?"":"s"} selected</strong>{chosen.map(segment=><button key={segment.id} onClick={()=>onSelect(segment.id)}>{segment.name}<span>×</span></button>)}</div></div>
+export default function MapCanvas({
+  segments,
+  selected,
+  onSelect,
+  onRoadCreated,
+  result,
+  selectionMode,
+}: {
+  segments: Segment[];
+  selected: string[];
+  onSelect: (id: string) => void;
+  onRoadCreated: (road: Segment) => void;
+  result: any;
+  selectionMode: boolean;
+}) {
+  const el = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!el.current) return;
+    let disposed = false,
+      map: any,
+      timer: number | undefined,
+      observer: ResizeObserver | undefined;
+    const boot = async () => {
+      const L = await import("leaflet");
+      if (disposed || !el.current) return;
+      map = L.map(el.current, {
+        zoomControl: true,
+        preferCanvas: true,
+      }).setView([22.294, 70.779], 14);
+      L.tileLayer(
+        "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+        {
+          subdomains: "abcd",
+          maxZoom: 20,
+          maxNativeZoom: 20,
+          keepBuffer: 4,
+          updateWhenIdle: true,
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; CARTO',
+        },
+      ).addTo(map);
+      observer = new ResizeObserver(() =>
+        map.invalidateSize({ pan: false, animate: false }),
+      );
+      observer.observe(el.current);
+      requestAnimationFrame(() =>
+        map.invalidateSize({ pan: false, animate: false }),
+      );
+      window.setTimeout(
+        () => map.invalidateSize({ pan: false, animate: false }),
+        300,
+      );
+      const animated: any[] = [];
+      segments.forEach((segment) => {
+        const closed = result?.map_layer?.closed_segment_ids?.includes(
+            segment.id,
+          ),
+          chosen = selected.includes(segment.id),
+          diverted = result?.map_layer?.rerouted_segment_ids?.includes(
+            segment.id,
+          );
+        const color = closed
+          ? "#111827"
+          : diverted
+            ? "#7c3aed"
+            : congestion(segment);
+        const line = L.polyline(
+          segment.geometry.map(([lon, lat]) => [lat, lon] as [number, number]),
+          {
+            color,
+            weight: chosen ? 8 : 4,
+            opacity: 0.88,
+            dashArray: closed ? "3 10" : chosen ? undefined : "12 12",
+            lineCap: "round",
+          },
+        ).addTo(map);
+        line.bindTooltip(
+          `<strong>${segment.name}</strong><br>${segment.highway || "road"} · ${segment.current_speed_kph ?? "?"}/${segment.free_flow_speed_kph} km/h<br>${segment.estimated_vehicles_per_hour ?? "?"} estimated veh/h`,
+          { sticky: true },
+        );
+        line.on("click", (event: any) => {
+          L.DomEvent.stopPropagation(event);
+          onSelect(segment.id);
+        });
+        if (
+          !closed &&
+          !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        )
+          animated.push(line);
+      });
+      let dash = 0;
+      if (animated.length)
+        timer = window.setInterval(() => {
+          dash = (dash - 1) % 24;
+          animated.forEach((line) =>
+            line.setStyle({ dashOffset: String(dash) }),
+          );
+        }, 90);
+      let start: any = null,
+        startMarker: any = null;
+      map.on("click", async (event: any) => {
+        if (!selectionMode) return;
+        if (!start) {
+          start = event.latlng;
+          startMarker = L.circleMarker(start, {
+            radius: 8,
+            color: "#4f46e5",
+            fillColor: "#fff",
+            fillOpacity: 1,
+            weight: 3,
+          })
+            .addTo(map)
+            .bindTooltip("A · start", { permanent: true, direction: "top" });
+          return;
+        }
+        const end = event.latlng;
+        L.circleMarker(end, {
+          radius: 8,
+          color: "#4f46e5",
+          fillColor: "#fff",
+          fillOpacity: 1,
+          weight: 3,
+        })
+          .addTo(map)
+          .bindTooltip("B · end", { permanent: true, direction: "top" });
+        try {
+          const params = new URLSearchParams({
+            start_lat: String(start.lat),
+            start_lon: String(start.lng),
+            end_lat: String(end.lat),
+            end_lon: String(end.lng),
+          });
+          const response = await fetch(
+            `${API}/api/v1/network/route-section?${params}`,
+          );
+          if (!response.ok) throw new Error(await response.text());
+          const route = await response.json();
+          onRoadCreated({
+            id: `map_${Date.now()}`,
+            name: route.name,
+            direction: "selected OSM section",
+            geometry: route.geometry,
+            lanes: 1,
+            free_flow_speed_kph: 35,
+            current_speed_kph: 22,
+            estimated_vehicles_per_hour: 900,
+            traffic_provenance: "estimated",
+            mapping_confidence: 1,
+            provenance: "derived",
+            custom: true,
+          });
+        } catch (error) {
+          console.error(error);
+        } finally {
+          start = null;
+          if (startMarker) {
+            startMarker.remove();
+            startMarker = null;
+          }
+        }
+      });
+    };
+    boot();
+    return () => {
+      disposed = true;
+      if (timer) clearInterval(timer);
+      observer?.disconnect();
+      if (map) map.remove();
+    };
+  }, [segments, selected, onSelect, onRoadCreated, result, selectionMode]);
+  const chosen = segments.filter((segment) => selected.includes(segment.id));
+  return (
+    <div className="map-wrap">
+      <div
+        className={`map ${selectionMode ? "selecting" : ""}`}
+        ref={el}
+        aria-label="OpenStreetMap road network and congestion layer"
+      />
+      <div className="osm-badge">
+        OpenStreetMap network · {segments.length} selectable roads
+      </div>
+      <div className="selection-stack">
+        <strong>
+          {chosen.length} portion{chosen.length === 1 ? "" : "s"} selected
+        </strong>
+        {chosen.map((segment) => (
+          <button key={segment.id} onClick={() => onSelect(segment.id)}>
+            {segment.name}
+            <span>×</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
