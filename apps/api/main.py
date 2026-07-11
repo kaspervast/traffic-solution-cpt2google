@@ -3,12 +3,14 @@ from __future__ import annotations
 import csv
 import io
 import os
+import httpx
 from typing import Any
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from domain import AiDraftRequest, ProjectCreate, ScenarioCreate, SignalProgram, calibration_grade, now_iso, uid
+from osm import RAJKOT_BBOX, fetch_osm_roads, fetch_osm_route_section
 from services import DEMO_SEGMENTS, comparison, openrouter_draft, tomtom_flow, validate_closure
 
 app = FastAPI(title="Rajkot Traffic Lab API", version="0.1.0")
@@ -19,6 +21,7 @@ scenarios: dict[str, dict[str, Any]] = {}
 signals: dict[str, dict[str, Any]] = {}
 observations: list[dict[str, Any]] = []
 ai_drafts: dict[str, dict[str, Any]] = {}
+network_segments = list(DEMO_SEGMENTS)
 
 
 @app.get("/health")
@@ -50,8 +53,34 @@ def import_network(project_id: str):
 
 
 @app.get("/api/v1/network-versions/demo/segments")
-def segments():
-    return {"items": [s.model_dump() for s in DEMO_SEGMENTS]}
+async def segments(refresh: bool = False):
+    global network_segments
+    source = "openstreetmap"
+    if refresh or not any(segment.id.startswith("osm_") for segment in network_segments):
+        try:
+            network_segments = await fetch_osm_roads()
+        except RuntimeError:
+            source = "demo-fallback"
+    return {"items": [segment.model_dump() for segment in network_segments], "source": source, "bbox": RAJKOT_BBOX, "count": len(network_segments)}
+
+
+@app.get("/api/v1/network/roads")
+async def osm_roads(south: float = RAJKOT_BBOX[0], west: float = RAJKOT_BBOX[1], north: float = RAJKOT_BBOX[2], east: float = RAJKOT_BBOX[3], refresh: bool = False):
+    global network_segments
+    if refresh or not any(segment.id.startswith("osm_") for segment in network_segments):
+        try:
+            network_segments = await fetch_osm_roads((south, west, north, east))
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
+    return {"items": [segment.model_dump() for segment in network_segments], "source": "openstreetmap", "count": len(network_segments), "bbox": [south, west, north, east]}
+
+
+@app.get("/api/v1/network/route-section")
+async def route_section(start_lat: float, start_lon: float, end_lat: float, end_lon: float):
+    try:
+        return await fetch_osm_route_section(start_lat, start_lon, end_lat, end_lon)
+    except (RuntimeError, httpx.HTTPError) as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 def parse_csv(data: bytes, required: set[str]) -> tuple[list[dict], list[dict]]:
@@ -119,7 +148,8 @@ def create_scenario(project_id: str, payload: ScenarioCreate):
     if project_id != payload.project_id:
         raise HTTPException(422, "Project ID mismatch")
     scenario_id = uid("scn")
-    validation = validate_closure(payload.operation)
+    operation_validations = [validate_closure(operation) for operation in payload.operations]
+    validation = {"valid": all(item["valid"] for item in operation_validations), "errors": [error for item in operation_validations for error in item["errors"]], "warnings": [warning for item in operation_validations for warning in item["warnings"]], "affected_od_pairs": sum(item["affected_od_pairs"] for item in operation_validations)}
     scenario = {"id": scenario_id, **payload.model_dump(mode="json"), "status": "draft", "validation": validation, "approved": False}
     scenarios[scenario_id] = scenario
     return scenario
@@ -149,7 +179,7 @@ def run_scenario(scenario_id: str):
     if not scenario or not scenario["approved"]:
         raise HTTPException(409, "Scenario must be approved before simulation")
     try:
-        return comparison(type_adapter(scenario["operation"]))
+        return comparison([type_adapter(operation) for operation in scenario["operations"]])
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -161,7 +191,7 @@ def type_adapter(operation: dict):
 
 @app.post("/api/v1/assistant/drafts")
 async def create_ai_draft(payload: AiDraftRequest):
-    segment = next((s for s in DEMO_SEGMENTS if s.id == payload.selected_segment_id), None)
+    segment = next((s for s in network_segments if s.id == payload.selected_segment_id), None)
     if not segment:
         raise HTTPException(422, "Selected road is not in the approved network")
     try:

@@ -12,7 +12,7 @@ def test_geh_and_calibration_gate():
 def test_closure_validation_and_matched_seeds():
     operation = CloseRoadOperation(road_segment_id="seg_kalawad_w", reason="Planned maintenance")
     assert validate_closure(operation)["valid"]
-    result = comparison(operation)
+    result = comparison([operation])
     assert result["seed_count"] == 5
     assert result["quality"]["passed"]
     assert result["map_layer"]["closed_segment_id"] == "seg_kalawad_w"
@@ -21,4 +21,3 @@ def test_closure_validation_and_matched_seeds():
 def test_signal_cycle_validation():
     signal = SignalProgram(junction_id="j1", name="Peak", cycle_seconds=90, phases=[{"duration_seconds": 45}, {"duration_seconds": 45}])
     assert signal.cycle_seconds == 90
-

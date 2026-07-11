@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./styles.css";
 import "./enhancements.css";
+import "leaflet/dist/leaflet.css";
 
 export const metadata: Metadata = { title: "Rajkot Traffic Lab", description: "Auditable corridor simulation" };
 

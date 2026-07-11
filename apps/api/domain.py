@@ -37,6 +37,10 @@ class RoadSegment(BaseModel):
     lanes: int = 2
     free_flow_speed_kph: float = 40
     current_speed_kph: float | None = None
+    estimated_vehicles_per_hour: int | None = None
+    osm_way_id: int | None = None
+    highway: str | None = None
+    scenario_estimates: dict = Field(default_factory=dict)
     traffic_provenance: Provenance = Provenance.estimated
     mapping_confidence: float = 1
     provenance: Provenance = Provenance.derived
@@ -53,6 +57,7 @@ class CloseRoadOperation(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
     provenance: Provenance = Provenance.assumed
     simulation_date: str | None = None
+    estimated_vehicles_per_hour: int | None = Field(default=None, ge=0, le=10000)
 
     @model_validator(mode="after")
     def valid_window(self):
@@ -68,8 +73,17 @@ class ScenarioCreate(BaseModel):
     project_id: str
     title: str = Field(min_length=2, max_length=120)
     objective: str = Field(min_length=3, max_length=500)
-    operation: ScenarioOperation
+    operation: ScenarioOperation | None = None
+    operations: list[ScenarioOperation] = Field(default_factory=list, max_length=20)
     source: Literal["manual", "ai"] = "manual"
+
+    @model_validator(mode="after")
+    def require_operations(self):
+        if self.operation and not self.operations:
+            self.operations = [self.operation]
+        if not self.operations:
+            raise ValueError("at least one scenario operation is required")
+        return self
 
 
 class SignalProgram(BaseModel):

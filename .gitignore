@@ -8,4 +8,5 @@ __pycache__/
 .venv/
 artifacts/
 *.pyc
-
+/*.rou.xml
+/*.trips.xml

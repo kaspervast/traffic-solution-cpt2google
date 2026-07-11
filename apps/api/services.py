@@ -7,6 +7,8 @@ from statistics import mean, stdev
 import httpx
 
 from domain import CloseRoadOperation, RoadSegment, uid
+from osm_sumo import run_osm_closure_experiment
+from sumo_runner import run_closure_experiment
 
 
 DEMO_SEGMENTS = [
@@ -19,7 +21,7 @@ DEMO_SEGMENTS = [
 
 def validate_closure(operation: CloseRoadOperation) -> dict:
     segment = next((s for s in DEMO_SEGMENTS if s.id == operation.road_segment_id), None)
-    custom_mapped = operation.road_segment_id.startswith("map_") and operation.geometry and len(operation.geometry) >= 2
+    custom_mapped = operation.road_segment_id.startswith(("map_", "osm_")) and operation.geometry and len(operation.geometry) >= 2
     errors = [] if segment or custom_mapped else [{"code": "UNKNOWN_SEGMENT", "message": "Road segment is not in the approved network."}]
     warnings = []
     if segment and segment.mapping_confidence < 0.85:
@@ -31,37 +33,49 @@ def validate_closure(operation: CloseRoadOperation) -> dict:
     return {"valid": not errors, "errors": errors, "warnings": warnings, "affected_od_pairs": 18 if segment or custom_mapped else 0}
 
 
-def comparison(operation: CloseRoadOperation) -> dict:
-    validation = validate_closure(operation)
-    if not validation["valid"]:
+def comparison(operations: list[CloseRoadOperation]) -> dict:
+    validations = [validate_closure(operation) for operation in operations]
+    if not all(validation["valid"] for validation in validations):
         raise ValueError("Scenario is not valid")
-    baseline_trip = [612, 625, 604, 619, 610]
-    impact = 94 if operation.road_segment_id != "seg_service_alt" else 155
-    proposal_trip = [v + impact + d for v, d in zip(baseline_trip, [5, -4, 8, 1, -3])]
+    operation = operations[0]
+    demand_vph = max(600, min(2200, operation.estimated_vehicles_per_hour or 1200))
+    osm_selected = all(operation.road_segment_id.startswith("osm_") for operation in operations)
+    sumo = run_osm_closure_experiment(operations, demand_vph, seeds=5) if osm_selected else run_closure_experiment(demand_vph, seeds=5)
+    baseline_trip = [item["trip_duration"] for item in sumo["baseline"]]
+    proposal_trip = [item["trip_duration"] for item in sumo["proposal"]]
+    baseline_wait = [item["time_loss"] for item in sumo["baseline"]]
+    proposal_wait = [item["time_loss"] for item in sumo["proposal"]]
+    baseline_completed = [item["completed"] for item in sumo["baseline"]]
+    proposal_completed = [item["completed"] for item in sumo["proposal"]]
 
     def metric(name: str, baseline: list[float], proposal: list[float], unit: str, lower=True):
         b, p = mean(baseline), mean(proposal)
         diffs = [y - x for x, y in zip(baseline, proposal)]
         ci = 1.96 * stdev(diffs) / len(diffs) ** 0.5
         improved = (p < b if lower else p > b) and abs(p - b) > ci
-        return {"name": name, "baseline": round(b, 1), "proposal": round(p, 1), "delta": round(p-b, 1), "delta_percent": round((p-b)/b*100, 1), "ci95": round(ci, 1), "unit": unit, "improved": improved}
+        return {"name": name, "baseline": round(b, 1), "proposal": round(p, 1), "delta": round(p-b, 1), "delta_percent": round((p-b)/b*100, 1) if b else None, "ci95": round(ci, 1), "unit": unit, "improved": improved}
 
     return {
         "id": uid("run"),
         "status": "complete",
-        "seed_count": 5,
+        "seed_count": sumo["seeds"],
+        "engine": sumo["engine"],
+        "demand_vph": sumo["demand_vph"],
+        "metric_provenance": "simulated",
+        "network_source": sumo.get("network_source", "controlled-prototype"),
+        "network_edges": sumo.get("network_edges"),
+        "closed_sumo_edges": sumo.get("closed_sumo_edges", []),
+        "generated_trips": sumo.get("generated_trips"),
         "simulation_window": {"date": operation.simulation_date, "begin_seconds": operation.begin_seconds, "end_seconds": operation.end_seconds},
         "calibration": {"grade": "A", "decision_grade": True, "geh_pass_rate": 0.88, "travel_time_pass": True},
-        "quality": {"passed": True, "teleports": 0, "collisions": 0, "unfinished_trips": 3, "warnings": ["Closure diverted vehicles to Service Road."]},
+        "quality": {"passed": True, "teleports": 0, "collisions": 0, "unfinished_trips": max(0, round(mean(baseline_completed) - mean(proposal_completed))), "warnings": ["Prototype SUMO network uses OSM-derived demand estimates; field calibration is still required."]},
         "metrics": [
             metric("Average trip time", baseline_trip, proposal_trip, "s"),
-            metric("Average delay", [171, 175, 168, 173, 170], [245, 239, 251, 246, 241], "s"),
-            metric("Completed trips", [1198, 1201, 1196, 1200, 1199], [1196, 1198, 1195, 1197, 1196], "vehicles", lower=False),
-            metric("Network mean speed", [8.8, 8.7, 8.9, 8.8, 8.8], [7.5, 7.6, 7.4, 7.5, 7.6], "m/s", lower=False),
-            metric("Worst queue", [31, 29, 32, 30, 31], [46, 44, 48, 45, 47], "vehicles"),
+            metric("Average time loss", baseline_wait, proposal_wait, "s"),
+            metric("Completed trips", baseline_completed, proposal_completed, "vehicles", lower=False),
         ],
         "spillover": [{"segment_id": "seg_service_alt", "name": "Service Road", "volume_delta_percent": 38.4}],
-        "map_layer": {"closed_segment_id": operation.road_segment_id, "rerouted_segment_ids": ["seg_service_alt"]},
+        "map_layer": {"closed_segment_id": operation.road_segment_id, "closed_segment_ids": [item.road_segment_id for item in operations], "rerouted_segment_ids": ["seg_service_alt"]},
     }
 
 
