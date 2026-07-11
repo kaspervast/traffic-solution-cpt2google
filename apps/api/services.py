@@ -66,6 +66,8 @@ def comparison(operations: list[CloseRoadOperation]) -> dict:
         "network_edges": sumo.get("network_edges"),
         "closed_sumo_edges": sumo.get("closed_sumo_edges", []),
         "generated_trips": sumo.get("generated_trips"),
+        "osm_web_wizard": sumo.get("osm_web_wizard", False),
+        "wizard_demand_files": sumo.get("wizard_demand_files", []),
         "simulation_window": {"date": operation.simulation_date, "begin_seconds": operation.begin_seconds, "end_seconds": operation.end_seconds},
         "calibration": {"grade": "A", "decision_grade": True, "geh_pass_rate": 0.88, "travel_time_pass": True},
         "quality": {"passed": True, "teleports": 0, "collisions": 0, "unfinished_trips": max(0, round(mean(baseline_completed) - mean(proposal_completed))), "warnings": ["Prototype SUMO network uses OSM-derived demand estimates; field calibration is still required."]},

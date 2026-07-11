@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 import xml.etree.ElementTree as ET
+import gzip
 from pathlib import Path
 from statistics import mean
 
@@ -43,10 +45,19 @@ def run_osm_closure_experiment(operations: list[CloseRoadOperation], demand_vph:
         folder = Path(temp)
         response = httpx.get(f"https://api.openstreetmap.org/api/0.6/map?bbox={west},{south},{east},{north}", timeout=150, headers={"User-Agent": "RajkotTrafficLab/0.2"})
         response.raise_for_status()
-        osm_file, baseline_net, proposal_net = folder / "map.osm.xml", folder / "baseline.net.xml", folder / "proposal.net.xml"
+        osm_file, proposal_net = folder / "map.osm.xml", folder / "proposal.net.xml"
         osm_file.write_bytes(response.content)
-        _run([os.getenv("NETCONVERT_BINARY", "netconvert"), "--osm-files", str(osm_file), "--output-file", str(baseline_net), "--geometry.remove", "true", "--junctions.join", "true", "--tls.guess-signals", "true", "--output.original-names", "true"], 180)
-        root = ET.parse(baseline_net).getroot()
+        wizard_dir = folder / "wizard"
+        sumo_home = Path(os.getenv("SUMO_HOME", "/usr/share/sumo"))
+        wizard = Path(os.getenv("OSM_WEB_WIZARD", str(sumo_home / "tools" / "osmWebWizard.py")))
+        passenger_period = 3600 / max(1, demand_vph * .54)
+        motorcycle_period = 3600 / max(1, demand_vph * .46)
+        _run([sys.executable, str(wizard), "--osm-file", str(osm_file), "--test-output", str(wizard_dir), "--remote", "-b", "0", "-e", "1800", "--demand", f"passenger:{passenger_period:.3f},motorcycle:{motorcycle_period:.3f}"], 300)
+        baseline_net = wizard_dir / "osm.net.xml.gz"
+        if not baseline_net.exists():
+            raise RuntimeError("osmWebWizard.py did not produce osm.net.xml.gz")
+        with gzip.open(baseline_net, "rb") as stream:
+            root = ET.parse(stream).getroot()
         edges = [edge for edge in root.findall("edge") if not edge.attrib.get("function")]
         way_ids = {operation.road_segment_id.removeprefix("osm_") for operation in operations if operation.road_segment_id.startswith("osm_")}
         selected = [edge for edge in edges if edge.attrib["id"].lstrip("-").split("#")[0] in way_ids]
@@ -69,17 +80,29 @@ def run_osm_closure_experiment(operations: list[CloseRoadOperation], demand_vph:
         trips.append("</routes>")
         trip_file = folder / "demand.trips.xml"
         trip_file.write_text("\n".join(trips), encoding="utf-8")
-        baseline_routes, proposal_routes = folder / "baseline.rou.xml", folder / "proposal.rou.xml"
-        _run([os.getenv("DUAROUTER_BINARY", "duarouter"), "-n", str(baseline_net), "-r", str(trip_file), "-o", str(baseline_routes), "--ignore-errors", "true"])
-        _run([os.getenv("DUAROUTER_BINARY", "duarouter"), "-n", str(proposal_net), "-r", str(trip_file), "-o", str(proposal_routes), "--ignore-errors", "true"])
+        wizard_trips = sorted(wizard_dir.glob("osm.*.trips.xml"))
+        if not wizard_trips:
+            raise RuntimeError("osmWebWizard.py did not produce demand trip files")
+        proposal_wizard_trips = []
+        for source in wizard_trips:
+            tree = ET.parse(source)
+            root_routes = tree.getroot()
+            for trip in list(root_routes.findall("trip")):
+                if trip.attrib.get("from") in selected_set or trip.attrib.get("to") in selected_set:
+                    root_routes.remove(trip)
+            target = folder / f"proposal_{source.name}"
+            tree.write(target, encoding="utf-8", xml_declaration=True)
+            proposal_wizard_trips.append(target)
+        baseline_route_files = wizard_trips + [trip_file]
+        proposal_route_files = proposal_wizard_trips + [trip_file]
         baseline, proposal = [], []
         for seed in range(1, seeds + 1):
-            for label, net, routes, target in (("baseline", baseline_net, baseline_routes, baseline), ("proposal", proposal_net, proposal_routes, proposal)):
+            for label, net, routes, target in (("baseline", baseline_net, baseline_route_files, baseline), ("proposal", proposal_net, proposal_route_files, proposal)):
                 output = folder / f"{label}_{seed}.tripinfo.xml"
-                _run([os.getenv("SUMO_BINARY", "sumo"), "-n", str(net), "-r", str(routes), "--seed", str(seed), "--end", "5400", "--lateral-resolution", ".8", "--tripinfo-output", str(output), "--no-step-log", "true", "--duration-log.disable", "true"], 180)
+                _run([os.getenv("SUMO_BINARY", "sumo"), "-n", str(net), "-r", ",".join(str(path) for path in routes), "--ignore-route-errors", "true", "--seed", str(seed), "--end", "5400", "--lateral-resolution", ".8", "--tripinfo-output", str(output), "--no-step-log", "true", "--duration-log.disable", "true"], 240)
                 target.append(_trip_metrics(output))
         return {"baseline": baseline, "proposal": proposal, "seeds": seeds, "demand_vph": demand_vph,
                 "engine": _run([os.getenv("SUMO_BINARY", "sumo"), "--version"], 10).stdout.splitlines()[0],
                 "network_source": "openstreetmap", "network_edges": len(edges), "closed_sumo_edges": selected_ids,
-                "bbox": [south, west, north, east], "generated_trips": vehicle_count}
-
+                "bbox": [south, west, north, east], "generated_trips": vehicle_count,
+                "osm_web_wizard": True, "wizard_demand_files": [path.name for path in wizard_trips]}
