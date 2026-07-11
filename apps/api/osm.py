@@ -36,10 +36,11 @@ def _vehicle_mix(highway: str) -> dict[str, float]:
 
 def _estimates(osm_id: int, highway: str, lanes: int, free_speed: float) -> dict:
     capacity = max(450, lanes * 1800 * .72)
-    variation = .9 + (osm_id % 17) / 100
+    variation = .55 + (osm_id % 61) / 100
     scenarios = {}
     for period, factor in PEAK_FACTORS.items():
-        vph = round(capacity * factor * variation)
+        class_factor = 1.08 if highway in {"trunk", "primary"} else .95 if highway in {"secondary", "tertiary"} else .78
+        vph = round(capacity * factor * variation * class_factor)
         volume_capacity = min(vph / capacity, 1.15)
         speed_ratio = max(.16, 1 - .72 * volume_capacity ** 2)
         scenarios[period] = {

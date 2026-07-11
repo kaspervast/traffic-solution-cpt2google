@@ -6,6 +6,9 @@
 .selection-stack button { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; text-align: left; border-color: #c7d2fe; background: #eef2ff; color: #3730a3; }
 .selection-stack button span { font-weight: 800; }
 .osm-badge { position: absolute; right: 14px; bottom: 14px; z-index: 500; padding: 6px 9px; border-radius: 6px; background: rgba(255,255,255,.92); color: #334155; font-size: 10px; box-shadow: 0 2px 8px #0f172a20; }
+.map-mode { position: absolute; z-index: 6; right: 16px; top: 70px; display: flex; padding: 3px; border: 1px solid #e2e8f0; border-radius: 8px; background: rgba(255,255,255,.95); box-shadow: 0 3px 12px #0f172a20; }
+.map-mode button { border: 0; padding: 6px 10px; background: transparent; color: #64748b; font-size: 11px; }
+.map-mode button.active { background: #eef2ff; color: #4338ca; font-weight: 700; }
 .maplibregl-map { font-family: inherit; background: #e5e7eb; }
 .simulation-proof { margin-top: 12px; padding: 10px 12px; border: 1px solid #bbf7d0; border-radius: 8px; background: #f0fdf4; display: flex; justify-content: space-between; gap: 12px; color: #166534; font-size: 11px; }
 .map-tools button:first-child { font-size: 0; }

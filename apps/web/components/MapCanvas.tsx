@@ -1,22 +1,312 @@
 "use client";
-import {useEffect,useRef} from "react";
-import type {Segment} from "./types";
+import { useEffect, useRef, useState } from "react";
+import type { Segment } from "./types";
 
-const API=process.env.NEXT_PUBLIC_API_BASE_URL||"http://localhost:8000";
-const congestion=(segment:Segment)=>{const ratio=(segment.current_speed_kph??segment.free_flow_speed_kph)/segment.free_flow_speed_kph;if(ratio>=.8)return"#16a34a";if(ratio>=.6)return"#84cc16";if(ratio>=.4)return"#f59e0b";if(ratio>=.2)return"#f97316";return"#dc2626"};
+const API = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const congestion = (segment: Segment) => {
+  const ratio =
+    (segment.current_speed_kph ?? segment.free_flow_speed_kph) /
+    segment.free_flow_speed_kph;
+  if (ratio >= 0.8) return "#16a34a";
+  if (ratio >= 0.6) return "#84cc16";
+  if (ratio >= 0.4) return "#f59e0b";
+  if (ratio >= 0.2) return "#f97316";
+  return "#dc2626";
+};
 
-export default function MapCanvas({segments,selected,onSelect,onRoadCreated,result,selectionMode}:{segments:Segment[];selected:string[];onSelect:(id:string)=>void;onRoadCreated:(road:Segment)=>void;result:any;selectionMode:boolean}){
- const el=useRef<HTMLDivElement>(null);
- useEffect(()=>{if(!el.current)return;let disposed=false,map:any,animation:number|undefined;const boot=async()=>{const maplibre=await import("maplibre-gl");if(disposed||!el.current)return;
-  const features=segments.map(segment=>({type:"Feature",id:segment.id,properties:{id:segment.id,name:segment.name,highway:segment.highway||"road",speed:segment.current_speed_kph??0,freeSpeed:segment.free_flow_speed_kph,vph:segment.estimated_vehicles_per_hour??0,color:result?.map_layer?.closed_segment_ids?.includes(segment.id)?"#111827":result?.map_layer?.rerouted_segment_ids?.includes(segment.id)?"#7c3aed":congestion(segment),selected:selected.includes(segment.id)?1:0},geometry:{type:"LineString",coordinates:segment.geometry}}));
-  map=new maplibre.Map({container:el.current,center:[70.779,22.294],zoom:13.6,attributionControl:false,style:{version:8,sources:{basemap:{type:"raster",tiles:["https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png","https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png","https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png","https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"],tileSize:256,attribution:'© OpenStreetMap contributors © CARTO'},roads:{type:"geojson",data:{type:"FeatureCollection",features} as any}},layers:[{id:"background",type:"background",paint:{"background-color":"#e5e7eb"}},{id:"basemap",type:"raster",source:"basemap",paint:{"raster-fade-duration":0}},{id:"roads",type:"line",source:"roads",layout:{"line-cap":"round","line-join":"round"},paint:{"line-color":["get","color"],"line-width":["case",["==",["get","selected"],1],8,4],"line-opacity":.9}},{id:"roads-flow",type:"line",source:"roads",layout:{"line-cap":"round"},paint:{"line-color":"#ffffff","line-width":1.5,"line-opacity":["case",["==",["get","selected"],1],.9,.55],"line-dasharray":[1,5]}}]}});
-  map.addControl(new maplibre.NavigationControl({showCompass:false}),"bottom-right");map.addControl(new maplibre.AttributionControl({compact:true}),"bottom-right");
-  let lastRoadClick=0,start:any=null,startMarker:any=null;map.on("load",()=>{map.resize();window.setTimeout(()=>map.resize(),250);if(!window.matchMedia("(prefers-reduced-motion: reduce)").matches){let phase=0;animation=window.setInterval(()=>{if(!map?.getLayer("roads-flow"))return;phase=(phase+1)%6;map.setPaintProperty("roads-flow","line-dasharray",phase<3?[1+phase,5-phase]:[6-phase,phase])},160)}});
-  map.on("mouseenter","roads",()=>map.getCanvas().style.cursor="pointer");map.on("mouseleave","roads",()=>map.getCanvas().style.cursor=selectionMode?"crosshair":"");
-  map.on("mousemove","roads",(event:any)=>{const feature=event.features?.[0];if(!feature)return;map.getCanvas().title=`${feature.properties.name} · ${feature.properties.speed}/${feature.properties.freeSpeed} km/h · ${feature.properties.vph} estimated veh/h`});
-  map.on("click","roads",(event:any)=>{const feature=event.features?.[0];if(!feature)return;lastRoadClick=Date.now();onSelect(String(feature.properties.id))});
-  map.on("click",async(event:any)=>{if(!selectionMode||Date.now()-lastRoadClick<150)return;if(!start){start=event.lngLat;startMarker=new maplibre.Marker({color:"#4f46e5"}).setLngLat(start).addTo(map);return}const end=event.lngLat;new maplibre.Marker({color:"#4f46e5"}).setLngLat(end).addTo(map);try{const params=new URLSearchParams({start_lat:String(start.lat),start_lon:String(start.lng),end_lat:String(end.lat),end_lon:String(end.lng)});const response=await fetch(`${API}/api/v1/network/route-section?${params}`);if(!response.ok)throw new Error(await response.text());const route=await response.json();onRoadCreated({id:`map_${Date.now()}`,name:route.name,direction:"selected OSM section",geometry:route.geometry,lanes:1,free_flow_speed_kph:35,current_speed_kph:22,estimated_vehicles_per_hour:900,traffic_provenance:"estimated",mapping_confidence:1,provenance:"derived",custom:true})}finally{start=null;startMarker?.remove();startMarker=null}});
- };
- boot();return()=>{disposed=true;if(animation)clearInterval(animation);if(map)map.remove()}},[segments,selected,onSelect,onRoadCreated,result,selectionMode]);
- const chosen=segments.filter(segment=>selected.includes(segment.id));return <div className="map-wrap"><div className={`map ${selectionMode?"selecting":""}`} ref={el} aria-label="OpenStreetMap road network and congestion layer"/><div className="osm-badge">OpenStreetMap network · {segments.length} selectable roads</div><div className="selection-stack"><strong>{chosen.length} portion{chosen.length===1?"":"s"} selected</strong>{chosen.map(segment=><button key={segment.id} onClick={()=>onSelect(segment.id)}>{segment.name}<span>×</span></button>)}</div></div>
+export default function MapCanvas({
+  segments,
+  selected,
+  onSelect,
+  onRoadCreated,
+  result,
+  selectionMode,
+}: {
+  segments: Segment[];
+  selected: string[];
+  onSelect: (id: string) => void;
+  onRoadCreated: (road: Segment) => void;
+  result: any;
+  selectionMode: boolean;
+}) {
+  const el = useRef<HTMLDivElement>(null);
+  const [viewMode, setViewMode] = useState<"traffic" | "network">("traffic");
+  useEffect(() => {
+    if (!el.current) return;
+    let disposed = false,
+      map: any,
+      animation: number | undefined;
+    const boot = async () => {
+      const maplibre = await import("maplibre-gl");
+      if (disposed || !el.current) return;
+      const features = segments.map((segment) => ({
+        type: "Feature",
+        id: segment.id,
+        properties: {
+          id: segment.id,
+          name: segment.name,
+          highway: segment.highway || "road",
+          major: ["motorway", "trunk", "primary", "secondary"].includes(
+            segment.highway || "",
+          )
+            ? 1
+            : 0,
+          speed: segment.current_speed_kph ?? 0,
+          freeSpeed: segment.free_flow_speed_kph,
+          vph: segment.estimated_vehicles_per_hour ?? 0,
+          color: result?.map_layer?.closed_segment_ids?.includes(segment.id)
+            ? "#111827"
+            : selected.includes(segment.id)
+              ? "#4f46e5"
+              : result?.map_layer?.rerouted_segment_ids?.includes(segment.id)
+                ? "#7c3aed"
+                : viewMode === "network"
+                  ? ["motorway", "trunk", "primary", "secondary"].includes(
+                      segment.highway || "",
+                    )
+                    ? "#2563eb"
+                    : "#64748b"
+                  : congestion(segment),
+          selected: selected.includes(segment.id) ? 1 : 0,
+        },
+        geometry: { type: "LineString", coordinates: segment.geometry },
+      }));
+      map = new maplibre.Map({
+        container: el.current,
+        center: [70.779, 22.294],
+        zoom: 13.6,
+        attributionControl: false,
+        style: {
+          version: 8,
+          sources: {
+            basemap: {
+              type: "raster",
+              tiles: [
+                "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+                "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+                "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+                "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+              ],
+              tileSize: 256,
+              attribution: "© OpenStreetMap contributors © CARTO",
+            },
+            roads: {
+              type: "geojson",
+              data: { type: "FeatureCollection", features } as any,
+            },
+          },
+          layers: [
+            {
+              id: "background",
+              type: "background",
+              paint: { "background-color": "#e5e7eb" },
+            },
+            {
+              id: "basemap",
+              type: "raster",
+              source: "basemap",
+              paint: { "raster-fade-duration": 0 },
+            },
+            {
+              id: "roads",
+              type: "line",
+              source: "roads",
+              layout: { "line-cap": "round", "line-join": "round" },
+              paint: {
+                "line-color": ["get", "color"],
+                "line-width": [
+                  "case",
+                  ["==", ["get", "selected"], 1],
+                  7,
+                  ["==", ["get", "major"], 1],
+                  3,
+                  1.2,
+                ],
+                "line-opacity": [
+                  "case",
+                  ["==", ["get", "selected"], 1],
+                  1,
+                  ["==", ["get", "major"], 1],
+                  0.82,
+                  0.32,
+                ],
+              },
+            },
+            {
+              id: "roads-flow",
+              type: "line",
+              source: "roads",
+              layout: { "line-cap": "round" },
+              paint: {
+                "line-color": "#ffffff",
+                "line-width": ["case", ["==", ["get", "selected"], 1], 1.8, 1],
+                "line-opacity": [
+                  "case",
+                  ["==", ["get", "selected"], 1],
+                  0.9,
+                  ["==", ["get", "major"], 1],
+                  0.22,
+                  0,
+                ],
+                "line-dasharray": [1, 5],
+              },
+            },
+            {
+              id: "roads-hit",
+              type: "line",
+              source: "roads",
+              paint: {
+                "line-color": "#000000",
+                "line-width": 12,
+                "line-opacity": 0,
+              },
+            },
+          ],
+        },
+      });
+      map.addControl(
+        new maplibre.NavigationControl({ showCompass: false }),
+        "bottom-right",
+      );
+      map.addControl(
+        new maplibre.AttributionControl({ compact: true }),
+        "bottom-right",
+      );
+      let lastRoadClick = 0,
+        start: any = null,
+        startMarker: any = null;
+      map.on("load", () => {
+        map.resize();
+        window.setTimeout(() => map.resize(), 250);
+        if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          let phase = 0;
+          animation = window.setInterval(() => {
+            if (!map?.getLayer("roads-flow")) return;
+            phase = (phase + 1) % 6;
+            map.setPaintProperty(
+              "roads-flow",
+              "line-dasharray",
+              phase < 3 ? [1 + phase, 5 - phase] : [6 - phase, phase],
+            );
+          }, 160);
+        }
+      });
+      map.on(
+        "mouseenter",
+        "roads-hit",
+        () => (map.getCanvas().style.cursor = "pointer"),
+      );
+      map.on(
+        "mouseleave",
+        "roads-hit",
+        () => (map.getCanvas().style.cursor = selectionMode ? "crosshair" : ""),
+      );
+      map.on("mousemove", "roads-hit", (event: any) => {
+        const feature = event.features?.[0];
+        if (!feature) return;
+        map.getCanvas().title = `${feature.properties.name} · ${feature.properties.speed}/${feature.properties.freeSpeed} km/h · ${feature.properties.vph} estimated veh/h`;
+      });
+      map.on("click", "roads-hit", (event: any) => {
+        const feature = event.features?.[0];
+        if (!feature) return;
+        lastRoadClick = Date.now();
+        onSelect(String(feature.properties.id));
+      });
+      map.on("click", async (event: any) => {
+        if (!selectionMode || Date.now() - lastRoadClick < 150) return;
+        if (!start) {
+          start = event.lngLat;
+          startMarker = new maplibre.Marker({ color: "#4f46e5" })
+            .setLngLat(start)
+            .addTo(map);
+          return;
+        }
+        const end = event.lngLat;
+        new maplibre.Marker({ color: "#4f46e5" }).setLngLat(end).addTo(map);
+        try {
+          const params = new URLSearchParams({
+            start_lat: String(start.lat),
+            start_lon: String(start.lng),
+            end_lat: String(end.lat),
+            end_lon: String(end.lng),
+          });
+          const response = await fetch(
+            `${API}/api/v1/network/route-section?${params}`,
+          );
+          if (!response.ok) throw new Error(await response.text());
+          const route = await response.json();
+          onRoadCreated({
+            id: `map_${Date.now()}`,
+            name: route.name,
+            direction: "selected OSM section",
+            geometry: route.geometry,
+            lanes: 1,
+            free_flow_speed_kph: 35,
+            current_speed_kph: 22,
+            estimated_vehicles_per_hour: 900,
+            traffic_provenance: "estimated",
+            mapping_confidence: 1,
+            provenance: "derived",
+            custom: true,
+          });
+        } finally {
+          start = null;
+          startMarker?.remove();
+          startMarker = null;
+        }
+      });
+    };
+    boot();
+    return () => {
+      disposed = true;
+      if (animation) clearInterval(animation);
+      if (map) map.remove();
+    };
+  }, [
+    segments,
+    selected,
+    onSelect,
+    onRoadCreated,
+    result,
+    selectionMode,
+    viewMode,
+  ]);
+  const chosen = segments.filter((segment) => selected.includes(segment.id));
+  return (
+    <div className="map-wrap">
+      <div
+        className={`map ${selectionMode ? "selecting" : ""}`}
+        ref={el}
+        aria-label="OpenStreetMap road network and congestion layer"
+      />
+      <div className="map-mode">
+        <button
+          className={viewMode === "traffic" ? "active" : ""}
+          onClick={() => setViewMode("traffic")}
+        >
+          Traffic
+        </button>
+        <button
+          className={viewMode === "network" ? "active" : ""}
+          onClick={() => setViewMode("network")}
+        >
+          Network
+        </button>
+      </div>
+      <div className="osm-badge">
+        OpenStreetMap network · {segments.length} selectable roads
+      </div>
+      <div className="selection-stack">
+        <strong>
+          {chosen.length} portion{chosen.length === 1 ? "" : "s"} selected
+        </strong>
+        {chosen.map((segment) => (
+          <button key={segment.id} onClick={() => onSelect(segment.id)}>
+            {segment.name}
+            <span>×</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
