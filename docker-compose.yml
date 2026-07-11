@@ -1,5 +1,6 @@
 services:
   web:
+    restart: unless-stopped
     build:
       context: ./apps/web
       args:
@@ -9,6 +10,7 @@ services:
     ports: ["${WEB_PORT:-3000}:3000"]
     depends_on: [api]
   api:
+    restart: unless-stopped
     build: ./apps/api
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://traffic:traffic@postgres:5432/traffic}
@@ -20,6 +22,7 @@ services:
     ports: ["${API_PORT:-8000}:8000"]
     depends_on: [postgres, redis, minio]
   worker:
+    restart: unless-stopped
     build: ./apps/api
     command: python worker.py
     environment:
@@ -27,6 +30,7 @@ services:
       SUMO_BINARY: sumo
     depends_on: [redis]
   postgres:
+    restart: unless-stopped
     image: postgis/postgis:16-3.4
     environment:
       POSTGRES_DB: traffic
@@ -34,8 +38,10 @@ services:
       POSTGRES_PASSWORD: traffic
     volumes: ["postgres-data:/var/lib/postgresql/data"]
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
   minio:
+    restart: unless-stopped
     image: minio/minio:latest
     command: server /data --console-address :9001
     environment:
